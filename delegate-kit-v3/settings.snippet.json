@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(codex --version)",
+      "Bash(codex login status)",
+      "Bash(codex exec *)",
+      "Bash(pwd -P)",
+      "Bash(mkdir -p .ai*)",
+      "Bash(date +%Y%m%d-%H%M)",
+      "Bash(git rev-parse *)",
+      "Bash(git branch --show-current)",
+      "Bash(git status *)",
+      "Bash(git switch -c ai/*)",
+      "Bash(git add -N .)",
+      "Bash(git add -A)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git log *)",
+      "Bash(git commit -m *)",
+      "Bash(pgrep -fl *)",
+      "Edit(.ai/**)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(* --dangerously-bypass-approvals-and-sandbox*)",
+      "Bash(* --yolo*)",
+      "Bash(* danger-full-access*)"
+    ]
+  },
+  "env": {
+    "BASH_MAX_TIMEOUT_MS": "1800000"
+  }
+}
