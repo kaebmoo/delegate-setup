@@ -1,0 +1,4 @@
+# Separate git repos used as local test fixtures; not part of this repo
+delegate-test/
+delegate-trap/
+.DS_Store
