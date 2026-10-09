@@ -173,3 +173,54 @@
 - ข้อสังเกต: ผลทดสอบ `ps` ที่ผมให้ผู้ใช้รันใช้ `grep -E "codex|delegate-run"` กว้างเกินไป จึงจับ process ของ desktop app ทั้งหมด ควรใช้ `grep -E "exec --cd \. --sandbox|delegate-run"`
 - **ยังไม่ได้ทดสอบ:** `/delegate resume` ในเซสชันใหม่ (กฎข้อ 3-4 ของ v4.3), รอบ FAIL แล้วแก้รอบที่ 2, การหยุดเมื่อไม่มีความคืบหน้า, exit 9 กับ Codex จริง, pattern ใหม่ของ pgrep กับ process จริงบน macOS (ทดสอบแล้วบน Linux)
 
+## 16. ผลทดสอบ `/delegate resume` ในเซสชันใหม่ (repo `delegate-test-resume`, v4.4)
+
+ที่มาของข้อมูล (ตรวจเมื่อ 2026-10-09): ไฟล์ใน `delegate-test-resume/.ai/`, `git log` ของ repo นั้น และ transcript ของ Claude Code ทั้ง 4 เซสชันใน `~/.claude/projects/-Users-seal-Documents-GitHub-delegate-test-resume/` สคริปต์ที่ติดตั้งตรงกับ kit v4.4 (`cmp` ตรงกัน, ติดตั้งเมื่อ 2026-10-08 11:13:37, `delegate-run 4.4`) Claude ที่เป็นผู้วางแผนและตรวจรับในทุกเซสชันคือ `claude-sonnet-5-5`
+
+repo ทดสอบ: `mathx.py` + `test_mathx.py` (unittest), สาขาเริ่มต้น `master`, มี `.gitignore` แล้ว
+
+| เซสชัน | เริ่ม (+07) | คำสั่ง | ผล |
+|---|---|---|---|
+| `56d92ad9` | 11:19:58 | `/delegate` เพิ่ม `sub` และ `mul` แยก 2 slice (run `20261008-1120`) | กด Esc ระหว่าง Codex slice 01 ทำงานได้ 4 วินาที ledger บันทึก `rc=interrupted` แล้วปิดเซสชัน |
+| `a6a0c446` | 11:21:55 | `/delegate resume` (เซสชันใหม่) | รัน slice 01 รอบเดิมซ้ำ PASS, slice 02 PASS, DONE |
+| `7e3568dd` | 11:26:29 | `/delegate` เพิ่ม `div` (run `20261008-1126`) โดยผู้ใช้แก้ `CODEX_TIMEOUT_SEC=8` ในสำเนาที่ติดตั้ง | exit 8 (`rc=timeout`), BLOCKED |
+| `13ccffd5` | 11:28:01 | `/delegate resume` (เซสชันใหม่) | หยุดถามก่อน ผู้ใช้เลือกข้อ 1 แล้วรันรอบ 2 PASS, DONE |
+
+ผลที่ได้คือ commit `ab85769` (sub), `af63865` (mul), `bcfd46e` (div) บนสาขา `ai/delegate-20261008-1120`, unittest 4 ตัวผ่าน, ไม่มี push, ไม่มี `.lock` หรือ `.timed-out` ค้างในโฟลเดอร์รันทั้งสอง Codex ใช้เวลา 38, 29 และ 33 วินาทีในรอบที่สำเร็จ
+
+**Resume หลัง `rc=interrupted` (กฎ Resume ข้อ 2 และ 4): ผ่าน**
+
+- Claude ตรวจ `git branch --show-current`, `git rev-parse HEAD`, `git status --porcelain` (ว่าง), `count` = 1, `pgrep` ไม่พบ process และ `check-status` ได้ exit 7 (`MISMATCH codex_runs: status.md says '0', the ledger (runs.log) says 1`) จึงแก้ status.md ให้ตรงกับ ledger และแจ้งผู้ใช้ว่าค่าเดิมค้าง status.md ค้างเพราะการกด Esc ตัดการเรียก Bash ก่อนที่ Claude จะคัดลอก `runs_total` ซึ่งเป็นกรณีที่ออกแบบให้ ledger ชนะไว้แล้ว
+- รัน preflight ข้อ 3-4 ซ้ำ (`codex --version`, `codex login status`, `codex exec --help`, `version` = 4.4) แล้วรัน slice 01 รอบ 1 ด้วย brief เดิม ไม่เปลี่ยนเลขรอบ (`runs_total=2/12`) ตรงตามกฎข้อ 4
+- ตอนจบ `check-status` exit 0 (`codex_runs=3, ledger=3`) รายงานว่าครั้งที่ถูกขัดจังหวะนับรวมด้วย
+- คำแนะนำการยกเลิก: task_branch ต่างจาก original_branch (`master`) จึงแนะนำ "สลับไป master แล้วลบสาขางาน" ถูกต้องตาม v4.2
+
+**เส้นทาง timeout (exit 8) กับ Codex จริง: ผ่าน**
+
+- Bash timeout ของการเรียกนั้นตั้งเป็น 68000 ms = (8 + 60) × 1000 ตามสูตรใน SKILL.md
+- สคริปต์หยุด Codex ที่ 8 วินาที (exit 8, ledger `rc=timeout result_bytes=0`) log มีเพียงข้อความว่า Codex เริ่มอ่าน slice ยังไม่ได้แก้ไฟล์ใด
+- Claude รัน `pgrep` (ไม่พบ) และ `git status --porcelain` (ว่าง), เขียน review บรรทัดแรก `verdict: BLOCKED` พร้อมสาเหตุ, ตั้ง state เป็น BLOCKED, รัน `check-status` (exit 0) ก่อนรายงาน BLOCKED และไม่รันซ้ำเอง
+
+**Resume หลัง `rc=timeout` และ state BLOCKED (กฎ Resume ข้อ 3 ที่เพิ่มใน v4.3): ผ่าน**
+
+- Claude ตรวจครบ (`check-status` exit 0, `pgrep` ไม่พบ, tree สะอาด, HEAD ตรงกับที่บันทึก) แล้ว **หยุดถามโดยไม่รันเอง** เสนอ 3 ทาง: ใช้ 540 วินาทีแล้วรันซ้ำ / ตั้งค่าอื่น / เปลี่ยน brief หรือแบ่ง slice ใหม่ ผู้ใช้ตอบ "1" หลังจากนั้น 8 นาที
+- Claude สร้าง `task-01-r2.md` จากรอบ 1 (เปลี่ยนเฉพาะหัวเรื่องด้วย `sed ... > ไฟล์`) แล้วรันเป็น **รอบ 2** ด้วย `--timeout-sec 540` และ Bash timeout 600000 และแก้บรรทัด `config:` ใน status.md เป็น `timeout_sec=540` ผล PASS
+- คำแนะนำการยกเลิก: run นี้ต่อยอดบนสาขา `ai/` เดิม (task_branch เท่ากับ original_branch) Claude บอกว่าห้ามลบสาขา และการ `git reset --hard <INITIAL_BASE>` ผู้ใช้ต้องตัดสินใจเอง Claude ไม่ได้รันเอง ตรงกับข้อความที่ v4.2 กำหนด
+
+**pattern ของ `pgrep` ใน v4.4 บน macOS จริง** (ตรวจบน Mac ของผู้ใช้เมื่อ 2026-10-09 ขณะ ChatGPT desktop app เปิดอยู่): `pgrep -fl "codex exec"` แบบเก่าจับ `.../ChatGPT.app/.../codex exec-server --remote ...` (จับผิดตัว) ส่วน pattern ใหม่ไม่จับอะไร (rc=1) daemon `app-server` ตอนนี้เป็นรุ่น 0.162.0 `bash tests/run_tests.sh` บน Mac เครื่องเดียวกันได้ 61 passed, 0 failed (รวม T14) ส่วนการที่ pattern ใหม่จับ process ของ `delegate-run.sh` ตัวจริงบน macOS ได้ (true positive) ยังทดสอบเฉพาะด้วย process จำลองใน T14
+
+**ข้อสังเกตและข้อบกพร่องที่พบ (ยังไม่ได้แก้ใน kit)**
+
+1. **ต่อคำสั่งด้วย `cd` ทำให้ cwd เปลี่ยน:** ในเซสชัน resume แรก Claude รัน `cd .ai/20261008-1120 && cat ... && ...` ซึ่งผิดกฎ "Run each Bash command as its own call" และ cwd ของ Bash ใน Claude Code คงอยู่ข้ามคำสั่ง คำสั่ง `delegate-run.sh count` ถัดมาจึงล้มด้วย exit 2 (`run from the repo root ... not from .../.ai/20261008-1120`) ซึ่ง `need_repo_root` กันไว้ได้ Claude แก้ด้วยการต่อ `cd <repo root> && ...` นำหน้า (ผิดกฎเดิมอีก) แล้วกลับมาที่ root ได้ ไม่มีผลเสียต่องาน แต่ทำให้เกิด permission prompt และเสี่ยงที่คำสั่ง git จะรันผิดโฟลเดอร์ (คำสั่ง git ช่วงนั้นรันจาก `.ai/20261008-1120` และได้ผลถูกเพราะ git หา repo จากโฟลเดอร์ย่อยได้) ข้อเสนอสำหรับรุ่นถัดไป: เพิ่มในกฎว่า "ห้ามใช้ `cd` ให้อ่านไฟล์ด้วย path ที่นับจาก root ของ repo"
+2. **ไม่ได้กำหนดเลขรอบหลัง BLOCKED จาก timeout:** กฎ Resume ข้อ 3 ให้ถามผู้ใช้ แต่ไม่ระบุว่ารอบถัดไปใช้เลขเดิมหรือ R+1 Claude เลือก R+1 จึงกินหนึ่งรอบของ `MAX_ROUNDS_PER_SLICE` (3) ทั้งที่รอบแรกไม่มีผลงาน ส่วนกรณี `rc=interrupted` กฎข้อ 4 ให้ใช้เลขเดิม สคริปต์รับได้ทั้งสองแบบเพราะรอบเดิมไม่มีไฟล์ result ควรกำหนดให้ชัด brief รอบ 2 ไม่มีหัวข้อ "Findings to fix" ซึ่งสมเหตุสมผลเพราะไม่ใช่ FAIL
+3. **ค่าที่ใช้จริงต่างจากบล็อก Configuration ที่โหลด:** SKILL.md ที่โหลดในเซสชัน `13ccffd5` ยังตั้งไว้ 8 วินาที Claude ใช้ 540 ตามคำตอบของผู้ใช้ในแชตและบันทึกไว้ใน status.md ถือว่ายอมรับได้เพราะผู้ใช้เลือกเอง แต่ SKILL.md ไม่ได้ระบุว่าคำตอบในแชตทับค่า Configuration ได้
+4. **สำเนาที่ติดตั้งต่างจาก kit:** `~/.claude/skills/delegate/SKILL.md` ถูกแก้เมื่อ 2026-10-08 11:58:08 (หลังการทดสอบทั้งหมด) เป็น `CODEX_TIMEOUT_SEC=1500` พร้อมคอมเมนต์ว่าต้องมี `BASH_MAX_TIMEOUT_MS >= 1560000` (`~/.claude/settings.json` ของเครื่องนี้ตั้ง 1800000 แล้ว) แต่ใน kit ยังเป็น 540 ผลคือ `bash install.sh` จะปฏิเสธ (exit 2) และ `--force` จะเขียนทับกลับเป็น 540 (มีไฟล์สำรอง) ต้องถามผู้ใช้ก่อนว่าจะยกค่า 1500 เข้า kit หรือไม่ (ตามหัวข้อ 7: ถามก่อนเปลี่ยนค่า default) ค่า 8 วินาทีที่ใช้ทดสอบไม่มีอยู่ในไฟล์สำรองใด เพราะแก้ในสำเนาที่ติดตั้งโดยตรงหลัง 11:13
+5. Codex ยังอ่าน `ponytail` SKILL.md จาก plugin cache (บันทึกใน `review-02-r1.md` ของ run `20261008-1120`) diff ไม่ได้รับผลกระทบ แต่ยังสรุปไม่ได้ว่าบรรทัดเรื่องลำดับความสำคัญใน brief ได้ผล
+6. Codex ตั้ง `PYTHONDONTWRITEBYTECODE=1` เองตอนรันเทสต์ เพื่อไม่ให้เกิดไฟล์ที่อยู่นอกขอบเขต (`result-01-r2.md` ของ run `20261008-1126`)
+
+**สถานะการทดสอบหลังหัวข้อนี้**
+
+- ทดสอบแล้ว (ตัดออกจากรายการค้าง): `/delegate resume` ในเซสชันใหม่, กฎ Resume ข้อ 2-4 ของ v4.3 (`rc=interrupted` และ `rc=timeout` + BLOCKED), BLOCKED จาก timeout (exit 8) กับ Codex จริง, pattern `pgrep` ไม่จับ process ของ desktop app บน macOS, ข้อความการยกเลิกทั้งสองแบบของ v4.2
+- ยังไม่ได้ทดสอบ: รอบ FAIL แล้วแก้รอบที่ 2 ด้วย "Findings to fix", การหยุดเมื่อไม่มีความคืบหน้า, exit 9 กับ Codex จริง, resume เมื่อ END ล่าสุดเป็น rc ไม่เป็นศูนย์ (exit 5) หรือเมื่อมี START ที่ไม่มี END, `pgrep` จับ process ของ `delegate-run.sh` ตัวจริงบน macOS, กฎ deny `Edit(.ai/*/runs.log)` และ allow รูปแบบ `~` กับ Claude Code จริง
+- ข้อ 1-3 ข้างบนเป็นตัวเลือกของ v4.5 (แก้เฉพาะข้อความใน SKILL.md) ข้อ 4 ต้องให้ผู้ใช้ตัดสินใจก่อน
+
